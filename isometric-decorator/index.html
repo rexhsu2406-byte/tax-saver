@@ -120,6 +120,8 @@
   #toolbar button:hover:not(:disabled) { background: #1a4a7a; }
   #toolbar button:disabled { opacity: 0.3; cursor: not-allowed; }
   .tb-sep { width: 1px; height: 22px; background: #0f3460; margin: 0 4px; }
+  #toolbar label { font-size: 12px; color: #aaa; display: flex; align-items: center; gap: 5px; }
+  #toolbar input[type="color"] { width: 32px; height: 24px; padding: 1px; border: 1px solid #1a4a7a; border-radius: 3px; cursor: pointer; background: none; }
 </style>
 </head>
 <body>
@@ -129,6 +131,10 @@
 <div id="toolbar">
   <button id="btn-undo" disabled>↶ Undo</button>
   <button id="btn-redo" disabled>↷ Redo</button>
+  <div class="tb-sep"></div>
+  <label>🎨 Left Wall: <input type="color" id="color-wall-left"  value="#A89078"></label>
+  <label>Right Wall: <input type="color" id="color-wall-right" value="#D4BC92"></label>
+  <label>Floor: <input type="color" id="color-floor"      value="#E8D5A9"></label>
 </div>
 
 <div id="main">
@@ -256,6 +262,22 @@ class RotateCommand {
   constructor(f, from, to) { this.f = f; this.from = from; this.to = to; }
   execute() { this.f.rotation = this.to; }
   undo()    { this.f.rotation = this.from; }
+}
+
+class ChangeWallColorCommand {
+  constructor(side, from, to) { this.side = side; this.from = from; this.to = to; }
+  _apply(c) {
+    if (this.side === 'left') roomColors.wallLeft = c; else roomColors.wallRight = c;
+    syncColorInputs();
+  }
+  execute() { this._apply(this.to); }
+  undo()    { this._apply(this.from); }
+}
+
+class ChangeFloorColorCommand {
+  constructor(from, to) { this.from = from; this.to = to; }
+  execute() { roomColors.floor = this.to;   syncColorInputs(); }
+  undo()    { roomColors.floor = this.from; syncColorInputs(); }
 }
 
 // ─────────────────────────────────────────────
@@ -405,7 +427,7 @@ class Renderer {
         ctx.closePath();
 
         const isHover = hoverTile && hoverTile.x === x && hoverTile.y === y;
-        ctx.fillStyle = isHover ? '#FFEB3B50' : '#E8D5A9';
+        ctx.fillStyle = isHover ? '#FFEB3B50' : roomColors.floor;
         ctx.fill();
         ctx.strokeStyle = '#00000020';
         ctx.lineWidth = 1;
@@ -419,7 +441,7 @@ class Renderer {
     const H = WALL_HEIGHT;
 
     // Left wall: along x-axis (y=0), x from 0..ROOM_SIZE
-    ctx.fillStyle = '#A89078';
+    ctx.fillStyle = roomColors.wallLeft;
     for (let x = 0; x < ROOM_SIZE; x++) {
       const bot = coords.toScreen(x, 0, 0);
       const top = coords.toScreen(x, 0, H);
@@ -438,7 +460,7 @@ class Renderer {
     }
 
     // Right wall: along y-axis (x=0), y from 0..ROOM_SIZE
-    ctx.fillStyle = '#D4BC92';
+    ctx.fillStyle = roomColors.wallRight;
     for (let y = 0; y < ROOM_SIZE; y++) {
       const bot = coords.toScreen(0, y, 0);
       const top = coords.toScreen(0, y, H);
@@ -627,8 +649,14 @@ let furnitures  = [];
 let selectedId  = null;
 let hoverTile   = null;
 let collision   = new CollisionSystem(furnitures);
+const roomColors = { wallLeft: '#A89078', wallRight: '#D4BC92', floor: '#E8D5A9' };
 
 function refreshCollision() { collision = new CollisionSystem(furnitures); }
+function syncColorInputs() {
+  document.getElementById('color-wall-left').value  = roomColors.wallLeft;
+  document.getElementById('color-wall-right').value = roomColors.wallRight;
+  document.getElementById('color-floor').value      = roomColors.floor;
+}
 function syncToolbar() {
   document.getElementById('btn-undo').disabled = !history.canUndo();
   document.getElementById('btn-redo').disabled = !history.canRedo();
@@ -756,6 +784,19 @@ document.addEventListener('keydown', e => {
 // ── Toolbar buttons ───────────────────────────
 document.getElementById('btn-undo').addEventListener('click', () => history.undo());
 document.getElementById('btn-redo').addEventListener('click', () => history.redo());
+
+document.getElementById('color-wall-left').addEventListener('change', e => {
+  const from = roomColors.wallLeft, to = e.target.value;
+  if (from !== to) history.execute(new ChangeWallColorCommand('left', from, to));
+});
+document.getElementById('color-wall-right').addEventListener('change', e => {
+  const from = roomColors.wallRight, to = e.target.value;
+  if (from !== to) history.execute(new ChangeWallColorCommand('right', from, to));
+});
+document.getElementById('color-floor').addEventListener('change', e => {
+  const from = roomColors.floor, to = e.target.value;
+  if (from !== to) history.execute(new ChangeFloorColorCommand(from, to));
+});
 
 // ─────────────────────────────────────────────
 // STATUS BAR
