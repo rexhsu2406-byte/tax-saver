@@ -63,11 +63,13 @@
   .palette-item:active { cursor: grabbing; }
   .palette-item.dragging-source { opacity: 0.5; }
 
-  .palette-swatch {
-    width: 20px;
-    height: 20px;
-    border-radius: 3px;
+  .palette-thumb {
+    width: 48px;
+    height: 48px;
+    object-fit: contain;
+    object-position: center bottom;
     flex-shrink: 0;
+    image-rendering: pixelated;
   }
 
   .palette-label { font-size: 13px; }
@@ -164,27 +166,27 @@
   <div id="palette">
     <h3>Furniture</h3>
     <div class="palette-item" data-type="rug">
-      <div class="palette-swatch" style="background:#4A90E2"></div>
+      <img class="palette-thumb" src="https://raw.githubusercontent.com/rexhsu2406-byte/tax-saver/main/isometric-decorator/assets/furniture/isometric_filtered/rugSquare_SE.png" alt="Rug">
       <div><div class="palette-label">Rug</div><div class="palette-dims">2×2</div></div>
     </div>
     <div class="palette-item" data-type="chair">
-      <div class="palette-swatch" style="background:#7ED321"></div>
+      <img class="palette-thumb" src="https://raw.githubusercontent.com/rexhsu2406-byte/tax-saver/main/isometric-decorator/assets/furniture/isometric_filtered/chair_SE.png" alt="Chair">
       <div><div class="palette-label">Chair</div><div class="palette-dims">1×1</div></div>
     </div>
     <div class="palette-item" data-type="table">
-      <div class="palette-swatch" style="background:#D0021B"></div>
+      <img class="palette-thumb" src="https://raw.githubusercontent.com/rexhsu2406-byte/tax-saver/main/isometric-decorator/assets/furniture/isometric_filtered/table_SE.png" alt="Table">
       <div><div class="palette-label">Table</div><div class="palette-dims">2×1</div></div>
     </div>
     <div class="palette-item" data-type="bed">
-      <div class="palette-swatch" style="background:#9013FE"></div>
+      <img class="palette-thumb" src="https://raw.githubusercontent.com/rexhsu2406-byte/tax-saver/main/isometric-decorator/assets/furniture/isometric_filtered/bedDouble_SE.png" alt="Bed">
       <div><div class="palette-label">Bed</div><div class="palette-dims">2×3</div></div>
     </div>
     <div class="palette-item" data-type="wardrobe">
-      <div class="palette-swatch" style="background:#F5A623"></div>
+      <img class="palette-thumb" src="https://raw.githubusercontent.com/rexhsu2406-byte/tax-saver/main/isometric-decorator/assets/furniture/isometric_filtered/bookcaseClosed_SE.png" alt="Wardrobe">
       <div><div class="palette-label">Wardrobe</div><div class="palette-dims">1×2</div></div>
     </div>
     <div class="palette-item" data-type="plant">
-      <div class="palette-swatch" style="background:#50E3C2"></div>
+      <img class="palette-thumb" src="https://raw.githubusercontent.com/rexhsu2406-byte/tax-saver/main/isometric-decorator/assets/furniture/isometric_filtered/pottedPlant_SE.png" alt="Plant">
       <div><div class="palette-label">Plant</div><div class="palette-dims">1×1</div></div>
     </div>
   </div>
@@ -216,12 +218,12 @@ const OFFSET_Y    = 200;
 const WALL_HEIGHT = 96; // px
 
 const FURNITURE_DEFS = {
-  rug:      { w: 2, d: 2, h: 2,  color: '#4A90E2', label: 'Rug',      isRug: true  },
-  chair:    { w: 1, d: 1, h: 32, color: '#7ED321', label: 'Chair'                   },
-  table:    { w: 2, d: 1, h: 26, color: '#D0021B', label: 'Table'                   },
-  bed:      { w: 2, d: 3, h: 20, color: '#9013FE', label: 'Bed'                     },
-  wardrobe: { w: 1, d: 2, h: 64, color: '#F5A623', label: 'Wardrobe'                },
-  plant:    { w: 1, d: 1, h: 48, color: '#50E3C2', label: 'Plant'                   },
+  rug:      { w: 2, d: 2, h: 2,  color: '#4A90E2', label: 'Rug',      isRug: true, spriteName: 'rugSquare'     },
+  chair:    { w: 1, d: 1, h: 32, color: '#7ED321', label: 'Chair',                 spriteName: 'chair'          },
+  table:    { w: 2, d: 1, h: 26, color: '#D0021B', label: 'Table',                 spriteName: 'table'          },
+  bed:      { w: 2, d: 3, h: 20, color: '#9013FE', label: 'Bed',                   spriteName: 'bedDouble'      },
+  wardrobe: { w: 1, d: 2, h: 64, color: '#F5A623', label: 'Wardrobe',              spriteName: 'bookcaseClosed' },
+  plant:    { w: 1, d: 1, h: 48, color: '#50E3C2', label: 'Plant',                 spriteName: 'pottedPlant'    },
 };
 
 // ─────────────────────────────────────────────
@@ -685,8 +687,9 @@ class Renderer {
   drawFurnitureList(furnitures, selectedId) {
     const sorted = [...furnitures].sort((a,b) => a.sortKey() - b.sortKey());
     for (const f of sorted) {
+      const spriteName = FURNITURE_DEFS[f.type].spriteName;
       const dir = this._rotToDir(f.rotation);
-      const img = spriteLoader.get(f.type, dir);
+      const img = spriteName ? spriteLoader.get(spriteName, dir) : null;
       if (img) {
         this.drawSprite(img, f.x, f.y, f.z, f.effectiveW, f.effectiveD, {
           selected: f.id === selectedId,
@@ -704,7 +707,7 @@ class Renderer {
     let w = def.w, d = def.d;
     if (rotation === 90 || rotation === 270) [w, d] = [d, w];
     const dir = this._rotToDir(rotation);
-    const img = spriteLoader.get(type, dir);
+    const img = def.spriteName ? spriteLoader.get(def.spriteName, dir) : null;
     if (img) {
       this.drawSprite(img, tileX, tileY, baseZ, w, d, { preview: true, valid });
     } else {
@@ -768,7 +771,10 @@ const history      = new CommandHistory();
 const drag         = new DragController();
 
 const spriteLoader = new SpriteLoader();
-spriteLoader.load('chair', ['NE','NW','SE','SW'], 'https://raw.githubusercontent.com/rexhsu2406-byte/tax-saver/main/isometric-decorator/assets/furniture/isometric_filtered/');
+const _SPRITE_BASE = 'https://raw.githubusercontent.com/rexhsu2406-byte/tax-saver/main/isometric-decorator/assets/furniture/isometric_filtered/';
+const _SPRITE_DIRS = ['NE', 'NW', 'SE', 'SW'];
+['chair', 'rugSquare', 'table', 'bedDouble', 'bookcaseClosed', 'pottedPlant']
+  .forEach(name => spriteLoader.load(name, _SPRITE_DIRS, _SPRITE_BASE));
 
 let furnitures  = [];
 let selectedId  = null;
