@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Isometric Decorator</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  #titlebar {
+    background: #16213e;
+    padding: 8px 16px;
+    font-size: 18px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    color: #e2b96f;
+    border-bottom: 2px solid #0f3460;
+    flex-shrink: 0;
+  }
+
+  #main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  #palette {
+    width: 180px;
+    background: #16213e;
+    border-right: 2px solid #0f3460;
+    padding: 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+    overflow-y: auto;
+  }
+
+  #palette h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    margin-bottom: 4px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #0f3460;
+  }
+
+  .palette-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: #0f3460;
+    border-radius: 6px;
+    cursor: grab;
+    user-select: none;
+    transition: background 0.15s;
+    border: 2px solid transparent;
+  }
+  .palette-item:hover { background: #1a4a7a; border-color: #4a90d9; }
+  .palette-item:active { cursor: grabbing; }
+  .palette-item.dragging-source { opacity: 0.5; }
+
+  .palette-swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .palette-label { font-size: 13px; }
+  .palette-dims { font-size: 10px; color: #888; }
+
+  #canvas-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d1117;
+    overflow: hidden;
+  }
+
+  #gameCanvas {
+    display: block;
+    cursor: default;
+  }
+
+  #statusbar {
+    background: #16213e;
+    border-top: 2px solid #0f3460;
+    padding: 5px 16px;
+    font-size: 12px;
+    color: #aaa;
+    display: flex;
+    gap: 24px;
+    flex-shrink: 0;
+  }
+  #statusbar span { color: #e2b96f; }
+</style>
+</head>
+<body>
+
+<div id="titlebar">⬡ Isometric Decorator</div>
+
+<div id="main">
+  <div id="palette">
+    <h3>Furniture</h3>
+    <div class="palette-item" data-type="rug">
+      <div class="palette-swatch" style="background:#4A90E2"></div>
+      <div><div class="palette-label">Rug</div><div class="palette-dims">2×2</div></div>
+    </div>
+    <div class="palette-item" data-type="chair">
+      <div class="palette-swatch" style="background:#7ED321"></div>
+      <div><div class="palette-label">Chair</div><div class="palette-dims">1×1</div></div>
+    </div>
+    <div class="palette-item" data-type="table">
+      <div class="palette-swatch" style="background:#D0021B"></div>
+      <div><div class="palette-label">Table</div><div class="palette-dims">2×1</div></div>
+    </div>
+    <div class="palette-item" data-type="bed">
+      <div class="palette-swatch" style="background:#9013FE"></div>
+      <div><div class="palette-label">Bed</div><div class="palette-dims">2×3</div></div>
+    </div>
+    <div class="palette-item" data-type="wardrobe">
+      <div class="palette-swatch" style="background:#F5A623"></div>
+      <div><div class="palette-label">Wardrobe</div><div class="palette-dims">1×2</div></div>
+    </div>
+    <div class="palette-item" data-type="plant">
+      <div class="palette-swatch" style="background:#50E3C2"></div>
+      <div><div class="palette-label">Plant</div><div class="palette-dims">1×1</div></div>
+    </div>
+  </div>
+
+  <div id="canvas-container">
+    <canvas id="gameCanvas" width="1024" height="768"></canvas>
+  </div>
+</div>
+
+<div id="statusbar">
+  <div>Tile: <span id="stat-tile">-, -</span></div>
+  <div>Placed: <span id="stat-count">0</span></div>
+  <div id="stat-hint">Click palette to place furniture</div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────
+const TILE_WIDTH  = 64;
+const TILE_HEIGHT = 32;
+const ROOM_SIZE   = 16;
+const OFFSET_X    = 512;
+const OFFSET_Y    = 200;
+const WALL_HEIGHT = 96; // px
+
+const FURNITURE_DEFS = {
+  rug:      { w: 2, d: 2, h: 2,  color: '#4A90E2', label: 'Rug',      isRug: true  },
+  chair:    { w: 1, d: 1, h: 32, color: '#7ED321', label: 'Chair'                   },
+  table:    { w: 2, d: 1, h: 26, color: '#D0021B', label: 'Table'                   },
+  bed:      { w: 2, d: 3, h: 20, color: '#9013FE', label: 'Bed'                     },
+  wardrobe: { w: 1, d: 2, h: 64, color: '#F5A623', label: 'Wardrobe'                },
+  plant:    { w: 1, d: 1, h: 48, color: '#50E3C2', label: 'Plant'                   },
+};
+
+// ─────────────────────────────────────────────
+// COORD SYSTEM
+// ─────────────────────────────────────────────
+class CoordSystem {
+  toScreen(isoX, isoY, isoZ = 0) {
+    return {
+      x: (isoX - isoY) * (TILE_WIDTH  / 2) + OFFSET_X,
+      y: (isoX + isoY) * (TILE_HEIGHT / 2) - isoZ    + OFFSET_Y,
+    };
+  }
+
+  toIso(mouseX, mouseY) {
+    const sx = mouseX - OFFSET_X;
+    const sy = mouseY - OFFSET_Y;
+    const rawX = (sx / (TILE_WIDTH / 2) + sy / (TILE_HEIGHT / 2)) / 2;
+    const rawY = (sy / (TILE_HEIGHT / 2) - sx / (TILE_WIDTH / 2)) / 2;
+    return { x: Math.floor(rawX), y: Math.floor(rawY), rawX, rawY };
+  }
+
+  inBounds(x, y, w = 1, d = 1) {
+    return x >= 0 && y >= 0 && x + w <= ROOM_SIZE && y + d <= ROOM_SIZE;
+  }
+}
+
+// ─────────────────────────────────────────────
+// COMMAND HISTORY (stub for Phase 2)
+// ─────────────────────────────────────────────
+class CommandHistory {
+  constructor() { this._stack = []; this._pointer = -1; }
+  execute(action) { action.do(); }  // Phase 2: push + redo stack
+  undo() {}
+  redo() {}
+}
+
+// ─────────────────────────────────────────────
+// FURNITURE
+// ─────────────────────────────────────────────
+let _nextId = 1;
+class Furniture {
+  constructor(type, tileX, tileY, baseZ = 0) {
+    this.id       = _nextId++;
+    this.type     = type;
+    const def     = FURNITURE_DEFS[type];
+    this.w        = def.w;
+    this.d        = def.d;
+    this.h        = def.h;
+    this.color    = def.color;
+    this.isRug    = !!def.isRug;
+    this.sprite   = null; // future: image element
+    this.x        = tileX;
+    this.y        = tileY;
+    this.z        = baseZ;
+    this.rotation = 0; // 0 / 90 / 180 / 270
+  }
+
+  get effectiveW() { return (this.rotation === 90 || this.rotation === 270) ? this.d : this.w; }
+  get effectiveD() { return (this.rotation === 90 || this.rotation === 270) ? this.w : this.d; }
+
+  tiles() {
+    const list = [];
+    for (let dx = 0; dx < this.effectiveW; dx++)
+      for (let dy = 0; dy < this.effectiveD; dy++)
+        list.push({ x: this.x + dx, y: this.y + dy });
+    return list;
+  }
+
+  sortKey() { return this.x + this.y + this.z / TILE_HEIGHT; }
+}
+
+// ─────────────────────────────────────────────
+// COLLISION SYSTEM
+// ─────────────────────────────────────────────
+class CollisionSystem {
+  constructor(furnitureList) { this.list = furnitureList; }
+
+  // Returns baseZ for placing a piece, or -1 if blocked
+  getPlacementZ(type, tileX, tileY, rotation, excludeId = null) {
+    const def = FURNITURE_DEFS[type];
+    let w = def.w, d = def.d;
+    if (rotation === 90 || rotation === 270) { [w, d] = [d, w]; }
+
+    if (!coords.inBounds(tileX, tileY, w, d)) return -1;
+
+    const tiles = [];
+    for (let dx = 0; dx < w; dx++)
+      for (let dy = 0; dy < d; dy++)
+        tiles.push({ x: tileX + dx, y: tileY + dy });
+
+    let baseZ = 0;
+    for (const f of this.list) {
+      if (f.id === excludeId) continue;
+      for (const ft of f.tiles()) {
+        for (const t of tiles) {
+          if (ft.x === t.x && ft.y === t.y) {
+            if (f.isRug) continue;       // rugs are floor-level, no collision
+            if (def.isRug) return -1;    // can't place rug on top of something
+            const top = f.z + f.h;
+            if (top > baseZ) baseZ = top;
+          }
+        }
+      }
+    }
+    // Check actual overlap at same Z layer after resolving baseZ
+    for (const f of this.list) {
+      if (f.id === excludeId) continue;
+      if (f.isRug) continue;
+      const fTop = f.z + f.h;
+      const newTop = baseZ + def.h;
+      // Overlap in Z range?
+      const zOverlap = !(baseZ >= fTop || newTop <= f.z);
+      if (!zOverlap) continue;
+      for (const ft of f.tiles()) {
+        for (const t of tiles) {
+          if (ft.x === t.x && ft.y === t.y) return -1;
+        }
+      }
+    }
+    return baseZ;
+  }
+}
+
+// ─────────────────────────────────────────────
+// RENDERER
+// ─────────────────────────────────────────────
+class Renderer {
+  constructor(ctx) { this.ctx = ctx; }
+
+  clear() {
+    this.ctx.clearRect(0, 0, 1024, 768);
+    this.ctx.fillStyle = '#0d1117';
+    this.ctx.fillRect(0, 0, 1024, 768);
+  }
+
+  drawFloor(hoverTile) {
+    const ctx = this.ctx;
+    for (let x = 0; x < ROOM_SIZE; x++) {
+      for (let y = 0; y < ROOM_SIZE; y++) {
+        const s = coords.toScreen(x, y, 0);
+        const cx = s.x, cy = s.y;
+        const hw = TILE_WIDTH / 2, hh = TILE_HEIGHT / 2;
+
+        ctx.beginPath();
+        ctx.moveTo(cx,      cy - hh);
+        ctx.lineTo(cx + hw, cy);
+        ctx.lineTo(cx,      cy + hh);
+        ctx.lineTo(cx - hw, cy);
+        ctx.closePath();
+
+        const isHover = hoverTile && hoverTile.x === x && hoverTile.y === y;
+        ctx.fillStyle = isHover ? '#FFEB3B50' : '#E8D5A9';
+        ctx.fill();
+        ctx.strokeStyle = '#00000020';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+  }
+
+  drawWalls() {
+    const ctx = this.ctx;
+    const H = WALL_HEIGHT;
+
+    // Left wall: along x-axis (y=0), x from 0..ROOM_SIZE
+    ctx.fillStyle = '#A89078';
+    for (let x = 0; x < ROOM_SIZE; x++) {
+      const bot = coords.toScreen(x, 0, 0);
+      const top = coords.toScreen(x, 0, H);
+      const botR = coords.toScreen(x + 1, 0, 0);
+      const topR = coords.toScreen(x + 1, 0, H);
+      ctx.beginPath();
+      ctx.moveTo(bot.x, bot.y);
+      ctx.lineTo(botR.x, botR.y);
+      ctx.lineTo(topR.x, topR.y);
+      ctx.lineTo(top.x, top.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#00000030';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // Right wall: along y-axis (x=0), y from 0..ROOM_SIZE
+    ctx.fillStyle = '#D4BC92';
+    for (let y = 0; y < ROOM_SIZE; y++) {
+      const bot = coords.toScreen(0, y, 0);
+      const top = coords.toScreen(0, y, H);
+      const botR = coords.toScreen(0, y + 1, 0);
+      const topR = coords.toScreen(0, y + 1, H);
+      ctx.beginPath();
+      ctx.moveTo(bot.x, bot.y);
+      ctx.lineTo(botR.x, botR.y);
+      ctx.lineTo(topR.x, topR.y);
+      ctx.lineTo(top.x, top.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#00000030';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  // Hex color helpers
+  _hexToRgb(hex) {
+    const r = parseInt(hex.slice(1,3),16);
+    const g = parseInt(hex.slice(3,5),16);
+    const b = parseInt(hex.slice(5,7),16);
+    return [r,g,b];
+  }
+  _darken(hex, factor) {
+    const [r,g,b] = this._hexToRgb(hex);
+    return `rgb(${Math.round(r*factor)},${Math.round(g*factor)},${Math.round(b*factor)})`;
+  }
+
+  drawCube(isoX, isoY, isoZ, widthTiles, depthTiles, heightPx, color, options = {}) {
+    const ctx = this.ctx;
+    const alpha = options.preview ? 0.5 : 1.0;
+    ctx.globalAlpha = alpha;
+
+    const w = widthTiles, d = depthTiles, h = heightPx;
+
+    // Corners in iso space → screen
+    // Bottom face corners (z = isoZ)
+    const p00b = coords.toScreen(isoX,     isoY,     isoZ);
+    const p10b = coords.toScreen(isoX + w, isoY,     isoZ);
+    const p11b = coords.toScreen(isoX + w, isoY + d, isoZ);
+    const p01b = coords.toScreen(isoX,     isoY + d, isoZ);
+    // Top face corners (z = isoZ + h)
+    const p00t = coords.toScreen(isoX,     isoY,     isoZ + h);
+    const p10t = coords.toScreen(isoX + w, isoY,     isoZ + h);
+    const p11t = coords.toScreen(isoX + w, isoY + d, isoZ + h);
+    const p01t = coords.toScreen(isoX,     isoY + d, isoZ + h);
+
+    // If sprite exists (future): draw image anchored at bottom center
+    if (this._drawSprite && options.sprite) {
+      // placeholder for phase 2
+    }
+
+    // Left face (x+w side, facing viewer-left = isoY direction)
+    ctx.fillStyle = this._darken(color, 0.7);
+    ctx.beginPath();
+    ctx.moveTo(p10b.x, p10b.y);
+    ctx.lineTo(p11b.x, p11b.y);
+    ctx.lineTo(p11t.x, p11t.y);
+    ctx.lineTo(p10t.x, p10t.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Right face (y+d side)
+    ctx.fillStyle = this._darken(color, 0.85);
+    ctx.beginPath();
+    ctx.moveTo(p11b.x, p11b.y);
+    ctx.lineTo(p01b.x, p01b.y);
+    ctx.lineTo(p01t.x, p01t.y);
+    ctx.lineTo(p11t.x, p11t.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Top face
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(p00t.x, p00t.y);
+    ctx.lineTo(p10t.x, p10t.y);
+    ctx.lineTo(p11t.x, p11t.y);
+    ctx.lineTo(p01t.x, p01t.y);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.globalAlpha = 1.0;
+
+    // Outline
+    if (options.selected || options.valid === true || options.valid === false) {
+      let strokeColor;
+      if (options.selected)      strokeColor = '#FFEB3B';
+      else if (options.valid)    strokeColor = '#4CAF50';
+      else                        strokeColor = '#F44336';
+
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = options.selected ? 3 : 2;
+      ctx.globalAlpha = options.preview ? 0.8 : 1.0;
+
+      // Draw outline around top + visible edges
+      const outline = [p00t, p10t, p11t, p01t];
+      ctx.beginPath();
+      ctx.moveTo(outline[0].x, outline[0].y);
+      for (let i = 1; i < outline.length; i++) ctx.lineTo(outline[i].x, outline[i].y);
+      ctx.closePath();
+      ctx.stroke();
+
+      // Vertical edges
+      [[p10b,p10t],[p11b,p11t],[p01b,p01t]].forEach(([a,b]) => {
+        ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+      });
+      ctx.globalAlpha = 1.0;
+    }
+  }
+
+  drawFurnitureList(furnitures, selectedId) {
+    const sorted = [...furnitures].sort((a,b) => a.sortKey() - b.sortKey());
+    for (const f of sorted) {
+      this.drawCube(f.x, f.y, f.z, f.effectiveW, f.effectiveD, f.h, f.color, {
+        selected: f.id === selectedId,
+      });
+    }
+  }
+
+  drawPreview(type, tileX, tileY, rotation, baseZ, valid) {
+    const def = FURNITURE_DEFS[type];
+    let w = def.w, d = def.d;
+    if (rotation === 90 || rotation === 270) [w, d] = [d, w];
+    this.drawCube(tileX, tileY, baseZ, w, d, def.h, def.color, { preview: true, valid });
+  }
+}
+
+// ─────────────────────────────────────────────
+// DRAG STATE MACHINE
+// ─────────────────────────────────────────────
+// States: 'idle' | 'palette-drag' | 'furniture-drag'
+class DragController {
+  constructor() {
+    this.state          = 'idle';
+    this.dragType       = null;   // furniture type key for palette-drag
+    this.dragRotation   = 0;
+    this.dragFurniture  = null;   // Furniture ref for furniture-drag
+    this.previewTile    = null;   // { x, y }
+    this.previewValid   = false;
+    this.previewZ       = 0;
+  }
+
+  startPaletteDrag(type) {
+    this.state        = 'palette-drag';
+    this.dragType     = type;
+    this.dragRotation = 0;
+    this.previewTile  = null;
+  }
+
+  startFurnitureDrag(furniture) {
+    this.state       = 'furniture-drag';
+    this.dragFurniture = furniture;
+    this.dragType    = furniture.type;
+    this.dragRotation = furniture.rotation;
+    this.previewTile = { x: furniture.x, y: furniture.y };
+  }
+
+  cancel() {
+    this.state = 'idle';
+    this.dragType = null;
+    this.dragFurniture = null;
+    this.previewTile = null;
+  }
+
+  isDragging() { return this.state !== 'idle'; }
+}
+
+// ─────────────────────────────────────────────
+// GAME
+// ─────────────────────────────────────────────
+const canvas    = document.getElementById('gameCanvas');
+const ctx       = canvas.getContext('2d');
+const coords    = new CoordSystem();
+const renderer  = new Renderer(ctx);
+const history   = new CommandHistory();
+const drag      = new DragController();
+
+let furnitures  = [];
+let selectedId  = null;
+let hoverTile   = null; // { x, y } or null
+let collision   = new CollisionSystem(furnitures);
+
+// ── Palette mouse events ──────────────────────
+document.querySelectorAll('.palette-item').forEach(el => {
+  el.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const type = el.dataset.type;
+    drag.startPaletteDrag(type);
+    el.classList.add('dragging-source');
+    document.body.style.cursor = 'grabbing';
+  });
+});
+
+document.addEventListener('mouseup', e => {
+  document.querySelectorAll('.palette-item').forEach(el => el.classList.remove('dragging-source'));
+  document.body.style.cursor = '';
+
+  if (drag.state === 'palette-drag') {
+    if (drag.previewTile && drag.previewValid) {
+      const { x, y } = drag.previewTile;
+      const z = drag.previewZ;
+      history.execute({
+        do: () => {
+          const f = new Furniture(drag.dragType, x, y, z);
+          f.rotation = drag.dragRotation;
+          furnitures.push(f);
+          collision = new CollisionSystem(furnitures);
+        }
+      });
+    }
+    drag.cancel();
+  } else if (drag.state === 'furniture-drag') {
+    if (drag.previewTile && drag.previewValid) {
+      const { x, y } = drag.previewTile;
+      const z = drag.previewZ;
+      const f = drag.dragFurniture;
+      history.execute({
+        do: () => {
+          f.x = x; f.y = y; f.z = z;
+          f.rotation = drag.dragRotation;
+        }
+      });
+    }
+    drag.cancel();
+  }
+  updateStatusBar();
+});
+
+// ── Canvas mouse events ───────────────────────
+canvas.addEventListener('mousemove', e => {
+  const rect  = canvas.getBoundingClientRect();
+  const scaleX = canvas.width  / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top)  * scaleY;
+
+  const iso = coords.toIso(mx, my);
+  const tx = iso.x, ty = iso.y;
+
+  if (tx >= 0 && tx < ROOM_SIZE && ty >= 0 && ty < ROOM_SIZE) {
+    hoverTile = { x: tx, y: ty };
+  } else {
+    hoverTile = null;
+  }
+
+  if (drag.isDragging() && hoverTile) {
+    drag.previewTile = hoverTile;
+    const baseZ = collision.getPlacementZ(
+      drag.dragType, tx, ty, drag.dragRotation,
+      drag.state === 'furniture-drag' ? drag.dragFurniture.id : null
+    );
+    drag.previewValid = baseZ >= 0;
+    drag.previewZ     = baseZ >= 0 ? baseZ : 0;
+  } else if (drag.isDragging()) {
+    drag.previewTile  = null;
+    drag.previewValid = false;
+  }
+
+  document.getElementById('stat-tile').textContent =
+    hoverTile ? `${hoverTile.x}, ${hoverTile.y}` : '-, -';
+});
+
+canvas.addEventListener('mousedown', e => {
+  if (drag.state !== 'idle') return;
+  const rect  = canvas.getBoundingClientRect();
+  const scaleX = canvas.width  / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top)  * scaleY;
+  const iso = coords.toIso(mx, my);
+
+  // Hit-test furniture (reverse sorted = front first)
+  const sorted = [...furnitures].sort((a,b) => b.sortKey() - a.sortKey());
+  for (const f of sorted) {
+    for (const t of f.tiles()) {
+      if (t.x === iso.x && t.y === iso.y) {
+        selectedId = f.id;
+        drag.startFurnitureDrag(f);
+        return;
+      }
+    }
+  }
+  selectedId = null; // click empty
+});
+
+// ── Keyboard events ───────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    drag.cancel();
+    selectedId = null;
+    return;
+  }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (selectedId !== null && drag.state === 'idle') {
+      history.execute({
+        do: () => {
+          furnitures = furnitures.filter(f => f.id !== selectedId);
+          collision  = new CollisionSystem(furnitures);
+          selectedId = null;
+        }
+      });
+    }
+    return;
+  }
+  if ((e.key === 'r' || e.key === 'R') && drag.state === 'idle' && selectedId !== null) {
+    const f = furnitures.find(f => f.id === selectedId);
+    if (f) {
+      history.execute({ do: () => { f.rotation = (f.rotation + 90) % 360; } });
+    }
+    return;
+  }
+  if ((e.key === 'r' || e.key === 'R') && drag.isDragging()) {
+    drag.dragRotation = (drag.dragRotation + 90) % 360;
+  }
+});
+
+// ─────────────────────────────────────────────
+// STATUS BAR
+// ─────────────────────────────────────────────
+function updateStatusBar() {
+  document.getElementById('stat-count').textContent = furnitures.length;
+  const hints = {
+    'idle': selectedId ? 'Drag to move | R rotate | Del delete | Esc deselect' : 'Click furniture to select | Drag from palette to place',
+    'palette-drag': 'Release to place | R to rotate',
+    'furniture-drag': 'Release to move | Esc to cancel',
+  };
+  document.getElementById('stat-hint').textContent = hints[drag.state] || '';
+}
+
+// ─────────────────────────────────────────────
+// GAME LOOP
+// ─────────────────────────────────────────────
+function gameLoop() {
+  renderer.clear();
+  renderer.drawFloor(hoverTile);
+  renderer.drawWalls();
+  renderer.drawFurnitureList(furnitures, selectedId);
+
+  if (drag.isDragging() && drag.previewTile) {
+    renderer.drawPreview(
+      drag.dragType,
+      drag.previewTile.x,
+      drag.previewTile.y,
+      drag.dragRotation,
+      drag.previewZ,
+      drag.previewValid
+    );
+  }
+
+  updateStatusBar();
+  requestAnimationFrame(gameLoop);
+}
+
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
