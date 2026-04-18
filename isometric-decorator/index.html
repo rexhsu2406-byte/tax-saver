@@ -302,14 +302,14 @@ class Renderer {
     for (let x = 0; x < ROOM_SIZE; x++) {
       for (let y = 0; y < ROOM_SIZE; y++) {
         const s = coords.toScreen(x, y, 0);
-        const cx = s.x, cy = s.y;
         const hw = TILE_WIDTH / 2, hh = TILE_HEIGHT / 2;
 
+        // Anchor at back corner: corners are toScreen(x,y), (x+1,y), (x+1,y+1), (x,y+1)
         ctx.beginPath();
-        ctx.moveTo(cx,      cy - hh);
-        ctx.lineTo(cx + hw, cy);
-        ctx.lineTo(cx,      cy + hh);
-        ctx.lineTo(cx - hw, cy);
+        ctx.moveTo(s.x,      s.y);         // back  (x,   y  )
+        ctx.lineTo(s.x + hw, s.y + hh);    // right (x+1, y  )
+        ctx.lineTo(s.x,      s.y + hh * 2);// front (x+1, y+1)
+        ctx.lineTo(s.x - hw, s.y + hh);    // left  (x,   y+1)
         ctx.closePath();
 
         const isHover = hoverTile && hoverTile.x === x && hoverTile.y === y;
