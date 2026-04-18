@@ -225,6 +225,39 @@ const FURNITURE_DEFS = {
 };
 
 // ─────────────────────────────────────────────
+// SPRITE LOADER
+// ─────────────────────────────────────────────
+class SpriteLoader {
+  constructor() {
+    this.cache   = {};
+    this.ready   = false;
+    this._total  = 0;
+    this._done   = 0;
+  }
+
+  load(type, directions, basePath) {
+    this.cache[type] = {};
+    for (const dir of directions) {
+      this._total++;
+      const img = new Image();
+      img.onload = () => { this._done++; this._check(); };
+      img.onerror = () => {
+        console.error(`Sprite load failed: ${basePath}${type}_${dir}.png`);
+        this.cache[type][dir] = null;
+        this._done++;
+        this._check();
+      };
+      this.cache[type][dir] = img;
+      img.src = `${basePath}${type}_${dir}.png`;
+    }
+  }
+
+  _check() { if (this._done >= this._total) this.ready = true; }
+
+  get(type, dir) { return this.cache[type]?.[dir] ?? null; }
+}
+
+// ─────────────────────────────────────────────
 // COORD SYSTEM
 // ─────────────────────────────────────────────
 class CoordSystem {
@@ -546,11 +579,6 @@ class Renderer {
     const p11t = coords.toScreen(isoX + w, isoY + d, isoZ + h);
     const p01t = coords.toScreen(isoX,     isoY + d, isoZ + h);
 
-    // If sprite exists (future): draw image anchored at bottom center
-    if (this._drawSprite && options.sprite) {
-      // placeholder for phase 2
-    }
-
     // Left face (x+w side, facing viewer-left = isoY direction)
     ctx.fillStyle = this._darken(color, 0.7);
     ctx.beginPath();
@@ -610,12 +638,64 @@ class Renderer {
     }
   }
 
+  _rotToDir(rotation) {
+    return { 0: 'SE', 90: 'SW', 180: 'NW', 270: 'NE' }[rotation] || 'SE';
+  }
+
+  drawSprite(img, isoX, isoY, isoZ, effectiveW, effectiveD, options = {}) {
+    const ctx = this.ctx;
+
+    // Anchor: bottom-center of sprite → front vertex of tile footprint
+    const anchor = coords.toScreen(isoX + effectiveW, isoY + effectiveD, isoZ);
+    const drawX  = Math.round(anchor.x - img.width  / 2);
+    const drawY  = Math.round(anchor.y - img.height);
+
+    ctx.globalAlpha = options.preview ? 0.5 : 1.0;
+    ctx.drawImage(img, drawX, drawY);
+    ctx.globalAlpha = 1.0;
+
+    // Tile footprint diamond
+    const pBack  = coords.toScreen(isoX,             isoY,             isoZ);
+    const pRight = coords.toScreen(isoX + effectiveW, isoY,            isoZ);
+    const pFront = coords.toScreen(isoX + effectiveW, isoY + effectiveD, isoZ);
+    const pLeft  = coords.toScreen(isoX,             isoY + effectiveD, isoZ);
+
+    let strokeColor = null;
+    let lineAlpha   = 1.0;
+    let lineWidth   = 2;
+    if (options.selected)          { strokeColor = '#FFEB3B'; lineWidth = 3; }
+    else if (options.valid === true)  { strokeColor = '#4CAF50'; lineAlpha = 0.8; }
+    else if (options.valid === false) { strokeColor = '#F44336'; lineAlpha = 0.8; }
+
+    if (strokeColor) {
+      ctx.strokeStyle  = strokeColor;
+      ctx.lineWidth    = lineWidth;
+      ctx.globalAlpha  = lineAlpha;
+      ctx.beginPath();
+      ctx.moveTo(pBack.x,  pBack.y);
+      ctx.lineTo(pRight.x, pRight.y);
+      ctx.lineTo(pFront.x, pFront.y);
+      ctx.lineTo(pLeft.x,  pLeft.y);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.globalAlpha = 1.0;
+    }
+  }
+
   drawFurnitureList(furnitures, selectedId) {
     const sorted = [...furnitures].sort((a,b) => a.sortKey() - b.sortKey());
     for (const f of sorted) {
-      this.drawCube(f.x, f.y, f.z, f.effectiveW, f.effectiveD, f.h, f.color, {
-        selected: f.id === selectedId,
-      });
+      const dir = this._rotToDir(f.rotation);
+      const img = spriteLoader.get(f.type, dir);
+      if (img) {
+        this.drawSprite(img, f.x, f.y, f.z, f.effectiveW, f.effectiveD, {
+          selected: f.id === selectedId,
+        });
+      } else {
+        this.drawCube(f.x, f.y, f.z, f.effectiveW, f.effectiveD, f.h, f.color, {
+          selected: f.id === selectedId,
+        });
+      }
     }
   }
 
@@ -623,7 +703,13 @@ class Renderer {
     const def = FURNITURE_DEFS[type];
     let w = def.w, d = def.d;
     if (rotation === 90 || rotation === 270) [w, d] = [d, w];
-    this.drawCube(tileX, tileY, baseZ, w, d, def.h, def.color, { preview: true, valid });
+    const dir = this._rotToDir(rotation);
+    const img = spriteLoader.get(type, dir);
+    if (img) {
+      this.drawSprite(img, tileX, tileY, baseZ, w, d, { preview: true, valid });
+    } else {
+      this.drawCube(tileX, tileY, baseZ, w, d, def.h, def.color, { preview: true, valid });
+    }
   }
 }
 
@@ -674,12 +760,15 @@ class DragController {
 // ─────────────────────────────────────────────
 // GAME
 // ─────────────────────────────────────────────
-const canvas    = document.getElementById('gameCanvas');
-const ctx       = canvas.getContext('2d');
-const coords    = new CoordSystem();
-const renderer  = new Renderer(ctx);
-const history   = new CommandHistory();
-const drag      = new DragController();
+const canvas       = document.getElementById('gameCanvas');
+const ctx          = canvas.getContext('2d');
+const coords       = new CoordSystem();
+const renderer     = new Renderer(ctx);
+const history      = new CommandHistory();
+const drag         = new DragController();
+
+const spriteLoader = new SpriteLoader();
+spriteLoader.load('chair', ['NE','NW','SE','SW'], 'assets/furniture/isometric_filtered/');
 
 let furnitures  = [];
 let selectedId  = null;
@@ -970,6 +1059,17 @@ function updateStatusBar() {
 // ─────────────────────────────────────────────
 function gameLoop() {
   renderer.clear();
+
+  if (!spriteLoader.ready) {
+    ctx.fillStyle = '#e2b96f';
+    ctx.font = 'bold 20px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Loading sprites…', 512, 384);
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+
   renderer.drawFloor(hoverTile);
   renderer.drawWalls();
   renderer.drawFurnitureList(furnitures, selectedId);
