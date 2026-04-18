@@ -98,11 +98,38 @@
     flex-shrink: 0;
   }
   #statusbar span { color: #e2b96f; }
+
+  #toolbar {
+    background: #16213e;
+    border-bottom: 2px solid #0f3460;
+    padding: 6px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  #toolbar button {
+    background: #0f3460;
+    color: #eee;
+    border: 1px solid #1a4a7a;
+    border-radius: 4px;
+    padding: 4px 12px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  #toolbar button:hover:not(:disabled) { background: #1a4a7a; }
+  #toolbar button:disabled { opacity: 0.3; cursor: not-allowed; }
+  .tb-sep { width: 1px; height: 22px; background: #0f3460; margin: 0 4px; }
 </style>
 </head>
 <body>
 
 <div id="titlebar">⬡ Isometric Decorator</div>
+
+<div id="toolbar">
+  <button id="btn-undo" disabled>↶ Undo</button>
+  <button id="btn-redo" disabled>↷ Redo</button>
+</div>
 
 <div id="main">
   <div id="palette">
@@ -189,13 +216,78 @@ class CoordSystem {
 }
 
 // ─────────────────────────────────────────────
-// COMMAND HISTORY (stub for Phase 2)
+// COMMANDS
+// ─────────────────────────────────────────────
+class PlaceCommand {
+  constructor(type, x, y, z, rotation) {
+    this.f = new Furniture(type, x, y, z);
+    this.f.rotation = rotation;
+  }
+  execute() { furnitures.push(this.f); refreshCollision(); }
+  undo() {
+    furnitures.splice(furnitures.indexOf(this.f), 1);
+    if (selectedId === this.f.id) selectedId = null;
+    refreshCollision();
+  }
+}
+
+class MoveCommand {
+  constructor(f, fx, fy, fz, frot, tx, ty, tz, trot) {
+    this.f = f;
+    this.from = { x: fx, y: fy, z: fz, rot: frot };
+    this.to   = { x: tx, y: ty, z: tz, rot: trot };
+  }
+  execute() { this.f.x = this.to.x;   this.f.y = this.to.y;   this.f.z = this.to.z;   this.f.rotation = this.to.rot; }
+  undo()    { this.f.x = this.from.x; this.f.y = this.from.y; this.f.z = this.from.z; this.f.rotation = this.from.rot; }
+}
+
+class DeleteCommand {
+  constructor(f) { this.f = f; this._idx = -1; }
+  execute() {
+    this._idx = furnitures.indexOf(this.f);
+    furnitures.splice(this._idx, 1);
+    if (selectedId === this.f.id) selectedId = null;
+    refreshCollision();
+  }
+  undo() { furnitures.splice(this._idx, 0, this.f); refreshCollision(); }
+}
+
+class RotateCommand {
+  constructor(f, from, to) { this.f = f; this.from = from; this.to = to; }
+  execute() { this.f.rotation = this.to; }
+  undo()    { this.f.rotation = this.from; }
+}
+
+// ─────────────────────────────────────────────
+// COMMAND HISTORY
 // ─────────────────────────────────────────────
 class CommandHistory {
-  constructor() { this._stack = []; this._pointer = -1; }
-  execute(action) { action.do(); }  // Phase 2: push + redo stack
-  undo() {}
-  redo() {}
+  constructor() { this.undoStack = []; this.redoStack = []; }
+
+  execute(cmd) {
+    cmd.execute();
+    this.undoStack.push(cmd);
+    if (this.undoStack.length > 50) this.undoStack.shift();
+    this.redoStack = [];
+    syncToolbar();
+  }
+  undo() {
+    if (!this.undoStack.length) return;
+    const cmd = this.undoStack.pop();
+    cmd.undo();
+    this.redoStack.push(cmd);
+    syncToolbar();
+  }
+  redo() {
+    if (!this.redoStack.length) return;
+    const cmd = this.redoStack.pop();
+    cmd.execute();
+    this.undoStack.push(cmd);
+    syncToolbar();
+  }
+  clear() { this.undoStack = []; this.redoStack = []; syncToolbar(); }
+  canUndo() { return this.undoStack.length > 0; }
+  canRedo() { return this.redoStack.length > 0; }
 }
 
 // ─────────────────────────────────────────────
@@ -500,11 +592,15 @@ class DragController {
   }
 
   startFurnitureDrag(furniture) {
-    this.state       = 'furniture-drag';
+    this.state         = 'furniture-drag';
     this.dragFurniture = furniture;
-    this.dragType    = furniture.type;
-    this.dragRotation = furniture.rotation;
-    this.previewTile = { x: furniture.x, y: furniture.y };
+    this.dragType      = furniture.type;
+    this.dragRotation  = furniture.rotation;
+    this.previewTile   = { x: furniture.x, y: furniture.y };
+    this.originalX     = furniture.x;
+    this.originalY     = furniture.y;
+    this.originalZ     = furniture.z;
+    this.originalRot   = furniture.rotation;
   }
 
   cancel() {
@@ -529,8 +625,14 @@ const drag      = new DragController();
 
 let furnitures  = [];
 let selectedId  = null;
-let hoverTile   = null; // { x, y } or null
+let hoverTile   = null;
 let collision   = new CollisionSystem(furnitures);
+
+function refreshCollision() { collision = new CollisionSystem(furnitures); }
+function syncToolbar() {
+  document.getElementById('btn-undo').disabled = !history.canUndo();
+  document.getElementById('btn-redo').disabled = !history.canRedo();
+}
 
 // ── Palette mouse events ──────────────────────
 document.querySelectorAll('.palette-item').forEach(el => {
@@ -550,28 +652,17 @@ document.addEventListener('mouseup', e => {
   if (drag.state === 'palette-drag') {
     if (drag.previewTile && drag.previewValid) {
       const { x, y } = drag.previewTile;
-      const z = drag.previewZ;
-      history.execute({
-        do: () => {
-          const f = new Furniture(drag.dragType, x, y, z);
-          f.rotation = drag.dragRotation;
-          furnitures.push(f);
-          collision = new CollisionSystem(furnitures);
-        }
-      });
+      history.execute(new PlaceCommand(drag.dragType, x, y, drag.previewZ, drag.dragRotation));
     }
     drag.cancel();
   } else if (drag.state === 'furniture-drag') {
+    const f = drag.dragFurniture;
     if (drag.previewTile && drag.previewValid) {
       const { x, y } = drag.previewTile;
-      const z = drag.previewZ;
-      const f = drag.dragFurniture;
-      history.execute({
-        do: () => {
-          f.x = x; f.y = y; f.z = z;
-          f.rotation = drag.dragRotation;
-        }
-      });
+      const z = drag.previewZ, rot = drag.dragRotation;
+      if (x !== drag.originalX || y !== drag.originalY || z !== drag.originalZ || rot !== drag.originalRot) {
+        history.execute(new MoveCommand(f, drag.originalX, drag.originalY, drag.originalZ, drag.originalRot, x, y, z, rot));
+      }
     }
     drag.cancel();
   }
@@ -637,34 +728,34 @@ canvas.addEventListener('mousedown', e => {
 
 // ── Keyboard events ───────────────────────────
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
-    drag.cancel();
-    selectedId = null;
-    return;
-  }
+  const ctrl = e.ctrlKey || e.metaKey;
+
+  if (ctrl && e.key === 'z' && !e.shiftKey) { e.preventDefault(); history.undo(); return; }
+  if (ctrl && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); history.redo(); return; }
+
+  if (e.key === 'Escape') { drag.cancel(); selectedId = null; return; }
+
   if (e.key === 'Delete' || e.key === 'Backspace') {
     if (selectedId !== null && drag.state === 'idle') {
-      history.execute({
-        do: () => {
-          furnitures = furnitures.filter(f => f.id !== selectedId);
-          collision  = new CollisionSystem(furnitures);
-          selectedId = null;
-        }
-      });
+      const f = furnitures.find(f => f.id === selectedId);
+      if (f) history.execute(new DeleteCommand(f));
     }
     return;
   }
+
   if ((e.key === 'r' || e.key === 'R') && drag.state === 'idle' && selectedId !== null) {
     const f = furnitures.find(f => f.id === selectedId);
-    if (f) {
-      history.execute({ do: () => { f.rotation = (f.rotation + 90) % 360; } });
-    }
+    if (f) history.execute(new RotateCommand(f, f.rotation, (f.rotation + 90) % 360));
     return;
   }
   if ((e.key === 'r' || e.key === 'R') && drag.isDragging()) {
     drag.dragRotation = (drag.dragRotation + 90) % 360;
   }
 });
+
+// ── Toolbar buttons ───────────────────────────
+document.getElementById('btn-undo').addEventListener('click', () => history.undo());
+document.getElementById('btn-redo').addEventListener('click', () => history.redo());
 
 // ─────────────────────────────────────────────
 // STATUS BAR
