@@ -160,6 +160,8 @@
   <button id="btn-save">💾 Save</button>
   <button id="btn-load">📂 Load</button>
   <button id="btn-clear">🗑️ Clear</button>
+  <div class="tb-sep"></div>
+  <button id="btn-mode" style="background:#1a4a2a;border-color:#2a7a4a;color:#8fe0a8;">▶ 進入生活模式</button>
 </div>
 
 <div id="main">
@@ -201,6 +203,7 @@
 </div>
 
 <div id="statusbar">
+  <div id="stat-mode">BUILD</div>
   <div>Tile: <span id="stat-tile">-, -</span></div>
   <div>Placed: <span id="stat-count">0</span></div>
   <div id="stat-hint">Click palette to place furniture</div>
@@ -689,26 +692,38 @@ class Renderer {
     }
   }
 
-  drawFurnitureList(furnitures, selectedId) {
-    const sorted = [...furnitures].sort((a,b) => a.sortKey() - b.sortKey());
-    for (const f of sorted) {
-      const def = FURNITURE_DEFS[f.type];
-      const dir = this._rotToDir(f.rotation, def.dirMap);
-      const img = def.spriteName ? spriteLoader.get(def.spriteName, dir) : null;
-      if (img) {
-        this.drawSprite(img, f.x, f.y, f.z, f.effectiveW, f.effectiveD, {
-          selected:    f.id === selectedId,
-          yOffset:     def.spriteYOffset  || 0,
-          tilePivot:   def.tilePivot,
-          tilePivotX:  def.tilePivotX,
-          tilePivotY:  def.tilePivotY,
-        });
-      } else {
-        this.drawCube(f.x, f.y, f.z, f.effectiveW, f.effectiveD, f.h, f.color, {
-          selected: f.id === selectedId,
-        });
-      }
+  drawSingleFurniture(f, isSelected) {
+    const def = FURNITURE_DEFS[f.type];
+    const dir = this._rotToDir(f.rotation, def.dirMap);
+    const img = def.spriteName ? spriteLoader.get(def.spriteName, dir) : null;
+    if (img) {
+      this.drawSprite(img, f.x, f.y, f.z, f.effectiveW, f.effectiveD, {
+        selected:   isSelected,
+        yOffset:    def.spriteYOffset || 0,
+        tilePivot:  def.tilePivot,
+        tilePivotX: def.tilePivotX,
+        tilePivotY: def.tilePivotY,
+      });
+    } else {
+      this.drawCube(f.x, f.y, f.z, f.effectiveW, f.effectiveD, f.h, f.color, {
+        selected: isSelected,
+      });
     }
+  }
+
+  drawCharacter(ch) {
+    const ctx   = this.ctx;
+    const bodyH = 80;
+    const headR = 10;
+    this.drawCube(ch.tileX, ch.tileY, 0, 1, 1, bodyH, '#4A90E2', {});
+    const top = coords.toScreen(ch.tileX + 0.5, ch.tileY + 0.5, bodyH + headR);
+    ctx.beginPath();
+    ctx.arc(top.x, top.y, headR, 0, Math.PI * 2);
+    ctx.fillStyle = '#F4C590';
+    ctx.fill();
+    ctx.strokeStyle = '#C49060';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
   }
 
   drawPreview(type, tileX, tileY, rotation, baseZ, valid) {
@@ -791,6 +806,56 @@ let hoverTile   = null;
 let collision   = new CollisionSystem(furnitures);
 const roomColors = { wallLeft: '#A89078', wallRight: '#D4BC92', floor: '#E8D5A9' };
 
+// ─────────────────────────────────────────────
+// MODE SYSTEM
+// ─────────────────────────────────────────────
+const MODE = { BUILD: 'build', LIVE: 'live' };
+let currentMode = MODE.BUILD;
+
+const character = { tileX: 0, tileY: 0, visible: false, facing: 'SE', state: 'idle' };
+
+function findSpawnTile() {
+  const candidates = [[0,0],[0,1],[1,0],[1,1],[0,2],[2,0],[1,2],[2,1],[2,2]];
+  for (const [x, y] of candidates) {
+    if (!furnitures.some(f => f.tiles().some(t => t.x === x && t.y === y)))
+      return { x, y };
+  }
+  return { x: 0, y: 0 };
+}
+
+const _BUILD_ONLY_IDS = ['btn-undo','btn-redo','btn-save','btn-load','btn-clear'];
+const _COLOR_IDS      = ['color-wall-left','color-wall-right','color-floor'];
+
+function setMode(mode) {
+  currentMode = mode;
+  const isLive = mode === MODE.LIVE;
+
+  document.getElementById('palette').style.display = isLive ? 'none' : '';
+
+  [..._BUILD_ONLY_IDS, ..._COLOR_IDS].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = isLive;
+  });
+
+  const btn = document.getElementById('btn-mode');
+  btn.textContent = isLive ? '🔨 返回佈置模式' : '▶ 進入生活模式';
+  btn.style.background    = isLive ? '#3a1a10' : '#1a4a2a';
+  btn.style.borderColor   = isLive ? '#8a3a20' : '#2a7a4a';
+  btn.style.color         = isLive ? '#e09070' : '#8fe0a8';
+
+  if (isLive) {
+    selectedId = null;
+    drag.cancel();
+    const sp = findSpawnTile();
+    character.tileX   = sp.x;
+    character.tileY   = sp.y;
+    character.visible = true;
+  } else {
+    character.visible = false;
+    syncToolbar(); // restore undo/redo disabled state
+  }
+}
+
 function refreshCollision() { collision = new CollisionSystem(furnitures); }
 function syncColorInputs() {
   document.getElementById('color-wall-left').value  = roomColors.wallLeft;
@@ -798,6 +863,7 @@ function syncColorInputs() {
   document.getElementById('color-floor').value      = roomColors.floor;
 }
 function syncToolbar() {
+  if (currentMode === MODE.LIVE) return; // toolbar locked in LIVE
   document.getElementById('btn-undo').disabled = !history.canUndo();
   document.getElementById('btn-redo').disabled = !history.canRedo();
 }
@@ -1050,10 +1116,22 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   history.execute(new ClearCommand());
 });
 
+document.getElementById('btn-mode').addEventListener('click', () => {
+  setMode(currentMode === MODE.BUILD ? MODE.LIVE : MODE.BUILD);
+});
+
 // ─────────────────────────────────────────────
 // STATUS BAR
 // ─────────────────────────────────────────────
 function updateStatusBar() {
+  if (currentMode === MODE.LIVE) {
+    document.getElementById('stat-mode').textContent = 'LIVE';
+    document.getElementById('stat-tile').textContent = `${character.tileX}, ${character.tileY}`;
+    document.getElementById('stat-count').textContent = furnitures.length;
+    document.getElementById('stat-hint').textContent = '互動功能開發中';
+    return;
+  }
+  document.getElementById('stat-mode').textContent = 'BUILD';
   document.getElementById('stat-count').textContent = furnitures.length;
   const hints = {
     'idle': selectedId ? 'Drag to move | R rotate | Del delete | Esc deselect' : 'Click furniture to select | Drag from palette to place',
@@ -1087,7 +1165,17 @@ function gameLoop() {
 
   renderer.drawFloor(hoverTile);
   renderer.drawWalls();
-  renderer.drawFurnitureList(furnitures, selectedId);
+
+  // Depth-sorted render: furniture + character together
+  const renderItems = furnitures.map(f => ({ isChar: false, f, key: f.sortKey() }));
+  if (character.visible) {
+    renderItems.push({ isChar: true, key: character.tileX + character.tileY + 0.5 });
+  }
+  renderItems.sort((a, b) => a.key - b.key);
+  for (const item of renderItems) {
+    if (item.isChar) renderer.drawCharacter(character);
+    else             renderer.drawSingleFurniture(item.f, item.f.id === selectedId);
+  }
 
   if (drag.isDragging() && drag.previewTile) {
     renderer.drawPreview(
