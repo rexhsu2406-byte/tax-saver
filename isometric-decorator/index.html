@@ -218,12 +218,12 @@ const OFFSET_Y    = 97;
 const WALL_HEIGHT = 96;
 
 const FURNITURE_DEFS = {
-  rug:      { w: 2, d: 2, h: 2,  color: '#4A90E2', label: 'Rug',      isRug: true, spriteName: 'rugSquare'                                                           },
-  chair:    { w: 1, d: 1, h: 32, color: '#7ED321', label: 'Chair',                 spriteName: 'chair'                                                               },
-  table:    { w: 2, d: 1, h: 26, color: '#D0021B', label: 'Table',                 spriteName: 'table',        dirMap: { 0: 'NW', 90: 'NE', 180: 'SE', 270: 'SW' }  },
-  bed:      { w: 3, d: 3, h: 20, color: '#9013FE', label: 'Bed',                   spriteName: 'bedDouble'                                                           },
-  wardrobe: { w: 1, d: 1, h: 64, color: '#F5A623', label: 'Wardrobe',              spriteName: 'bookcaseClosed'                                                      },
-  plant:    { w: 1, d: 1, h: 48, color: '#50E3C2', label: 'Plant',                 spriteName: 'pottedPlant',  spriteYOffset: -34                                   },
+  rug:      { w: 2, d: 2, h: 2,  color: '#4A90E2', label: 'Rug',      isRug: true, spriteName: 'rugSquare'                                                                                      },
+  chair:    { w: 1, d: 1, h: 32, color: '#7ED321', label: 'Chair',                 spriteName: 'chair'                                                                                          },
+  table:    { w: 2, d: 1, h: 26, color: '#D0021B', label: 'Table',                 spriteName: 'table',        dirMap: { 0: 'NW', 90: 'NE', 180: 'SE', 270: 'SW' }, tilePivot: { w: 0.5, d: 0.5 } },
+  bed:      { w: 3, d: 3, h: 20, color: '#9013FE', label: 'Bed',                   spriteName: 'bedDouble'                                                                                      },
+  wardrobe: { w: 1, d: 1, h: 64, color: '#F5A623', label: 'Wardrobe',              spriteName: 'bookcaseClosed'                                                                                 },
+  plant:    { w: 1, d: 1, h: 48, color: '#50E3C2', label: 'Plant',                 spriteName: 'pottedPlant',  spriteYOffset: -34                                                               },
 };
 
 // ─────────────────────────────────────────────
@@ -648,8 +648,9 @@ class Renderer {
   drawSprite(img, isoX, isoY, isoZ, effectiveW, effectiveD, options = {}) {
     const ctx = this.ctx;
 
-    // Anchor: bottom-center of sprite → front vertex of tile footprint
-    const anchor = coords.toScreen(isoX + effectiveW, isoY + effectiveD, isoZ);
+    // Anchor: bottom-center of sprite → tile pivot (default: front vertex)
+    const tp     = options.tilePivot || { w: 1, d: 1 };
+    const anchor = coords.toScreen(isoX + effectiveW * tp.w, isoY + effectiveD * tp.d, isoZ);
     const drawX  = Math.round(anchor.x - img.width  / 2);
     const drawY  = Math.round(anchor.y - img.height + (options.yOffset || 0));
 
@@ -693,8 +694,9 @@ class Renderer {
       const img = def.spriteName ? spriteLoader.get(def.spriteName, dir) : null;
       if (img) {
         this.drawSprite(img, f.x, f.y, f.z, f.effectiveW, f.effectiveD, {
-          selected: f.id === selectedId,
-          yOffset:  def.spriteYOffset || 0,
+          selected:   f.id === selectedId,
+          yOffset:    def.spriteYOffset  || 0,
+          tilePivot:  def.tilePivot,
         });
       } else {
         this.drawCube(f.x, f.y, f.z, f.effectiveW, f.effectiveD, f.h, f.color, {
@@ -711,7 +713,7 @@ class Renderer {
     const dir = this._rotToDir(rotation, def.dirMap);
     const img = def.spriteName ? spriteLoader.get(def.spriteName, dir) : null;
     if (img) {
-      this.drawSprite(img, tileX, tileY, baseZ, w, d, { preview: true, valid, yOffset: def.spriteYOffset || 0 });
+      this.drawSprite(img, tileX, tileY, baseZ, w, d, { preview: true, valid, yOffset: def.spriteYOffset || 0, tilePivot: def.tilePivot });
     } else {
       this.drawCube(tileX, tileY, baseZ, w, d, def.h, def.color, { preview: true, valid });
     }
