@@ -715,8 +715,13 @@ class Renderer {
     const ctx   = this.ctx;
     const bodyH = 80;
     const headR = 10;
-    this.drawCube(ch.tileX, ch.tileY, 0, 1, 1, bodyH, '#4A90E2', {});
-    const top = coords.toScreen(ch.tileX + 0.5, ch.tileY + 0.5, bodyH + headR);
+    const bob   = getWalkBob();
+    // Convert screen position → iso back-corner for drawCube
+    const iso   = isoFloatFromScreen(ch.pixelX, ch.pixelY);
+    const isoX  = iso.x - 0.5;
+    const isoY  = iso.y - 0.5;
+    this.drawCube(isoX, isoY, bob, 1, 1, bodyH, '#4A90E2', {});
+    const top = coords.toScreen(iso.x, iso.y, bodyH + headR + bob);
     ctx.beginPath();
     ctx.arc(top.x, top.y, headR, 0, Math.PI * 2);
     ctx.fillStyle = '#F4C590';
@@ -724,6 +729,20 @@ class Renderer {
     ctx.strokeStyle = '#C49060';
     ctx.lineWidth = 1.5;
     ctx.stroke();
+  }
+
+  drawPath(path) {
+    const ctx = this.ctx;
+    ctx.globalAlpha = 0.45;
+    ctx.fillStyle   = '#FFEB3B';
+    const r = Math.min(TILE_WIDTH, TILE_HEIGHT) * 0.15;
+    for (const pt of path) {
+      const c = coords.toScreen(pt.x + 0.5, pt.y + 0.5, 0);
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1.0;
   }
 
   drawPreview(type, tileX, tileY, rotation, baseZ, valid) {
@@ -812,7 +831,156 @@ const roomColors = { wallLeft: '#A89078', wallRight: '#D4BC92', floor: '#E8D5A9'
 const MODE = { BUILD: 'build', LIVE: 'live' };
 let currentMode = MODE.BUILD;
 
-const character = { tileX: 0, tileY: 0, visible: false, facing: 'SE', state: 'idle' };
+const character = {
+  tileX: 0, tileY: 0,
+  visible: false,
+  facing: 'SE',
+  state: 'idle',   // 'idle' | 'walking'
+  path: [],        // remaining [{x,y}] waypoints
+  pixelX: 0,       // screen-space position for smooth lerp
+  pixelY: 0,
+};
+
+// ─────────────────────────────────────────────
+// PATHFINDING + MOVEMENT
+// ─────────────────────────────────────────────
+const MOVE_DIRS = [
+  { dx:  0, dy: -1, cost: 1.0    },
+  { dx:  1, dy: -1, cost: 1.4142 },
+  { dx:  1, dy:  0, cost: 1.0    },
+  { dx:  1, dy:  1, cost: 1.4142 },
+  { dx:  0, dy:  1, cost: 1.0    },
+  { dx: -1, dy:  1, cost: 1.4142 },
+  { dx: -1, dy:  0, cost: 1.0    },
+  { dx: -1, dy: -1, cost: 1.4142 },
+];
+
+const CHAR_SPEED = 200; // screen px / second
+
+function tileCenter(x, y) { return coords.toScreen(x + 0.5, y + 0.5, 0); }
+
+function isoFloatFromScreen(sx, sy) {
+  const x = sx - OFFSET_X, y = sy - OFFSET_Y;
+  return {
+    x: (x / (TILE_WIDTH / 2) + y / (TILE_HEIGHT / 2)) / 2,
+    y: (y / (TILE_HEIGHT / 2) - x / (TILE_WIDTH / 2)) / 2,
+  };
+}
+
+function isWalkable(x, y) {
+  if (x < 0 || x >= ROOM_SIZE || y < 0 || y >= ROOM_SIZE) return false;
+  for (const f of furnitures) {
+    if (f.isRug) continue;
+    for (const t of f.tiles()) { if (t.x === x && t.y === y) return false; }
+  }
+  return true;
+}
+
+function astar(sx, sy, gx, gy) {
+  if (!isWalkable(gx, gy)) return null;
+  if (sx === gx && sy === gy) return [];
+
+  const key  = (x, y) => `${x},${y}`;
+  const heur = (x, y) => {
+    const dx = Math.abs(x - gx), dy = Math.abs(y - gy);
+    return (dx + dy) + (Math.SQRT2 - 2) * Math.min(dx, dy);
+  };
+
+  const open     = new Map();   // key → {x,y,f}
+  const closed   = new Set();
+  const cameFrom = new Map();   // key → parentKey
+  const g        = new Map();   // key → g-cost
+
+  const sk = key(sx, sy);
+  g.set(sk, 0);
+  open.set(sk, { x: sx, y: sy, f: heur(sx, sy) });
+
+  while (open.size > 0) {
+    let bestK = null, bestF = Infinity;
+    for (const [k, n] of open) { if (n.f < bestF) { bestF = n.f; bestK = k; } }
+    const cur = open.get(bestK);
+    open.delete(bestK);
+    closed.add(bestK);
+
+    if (cur.x === gx && cur.y === gy) {
+      const path = [];
+      let k = bestK;
+      while (cameFrom.has(k)) {
+        const [px, py] = k.split(',').map(Number);
+        path.unshift({ x: px, y: py });
+        k = cameFrom.get(k);
+      }
+      return path;
+    }
+
+    for (const dir of MOVE_DIRS) {
+      const nx = cur.x + dir.dx, ny = cur.y + dir.dy;
+      const nk = key(nx, ny);
+      if (closed.has(nk) || !isWalkable(nx, ny)) continue;
+      // Prevent diagonal corner-cutting
+      if (dir.dx !== 0 && dir.dy !== 0) {
+        if (!isWalkable(cur.x + dir.dx, cur.y) || !isWalkable(cur.x, cur.y + dir.dy)) continue;
+      }
+      const ng = (g.get(bestK) ?? 0) + dir.cost;
+      if (ng < (g.get(nk) ?? Infinity)) {
+        cameFrom.set(nk, bestK);
+        g.set(nk, ng);
+        open.set(nk, { x: nx, y: ny, f: ng + heur(nx, ny) });
+      }
+    }
+  }
+  return null;
+}
+
+function facingFromDelta(dx, dy) {
+  const dirs = [
+    [0,-1,'N'],[1,-1,'NE'],[1,0,'E'],[1,1,'SE'],
+    [0,1,'S'],[-1,1,'SW'],[-1,0,'W'],[-1,-1,'NW'],
+  ];
+  const match = dirs.find(([ddx,ddy]) => ddx === Math.sign(dx) && ddy === Math.sign(dy));
+  return match ? match[2] : character.facing;
+}
+
+function startMoveTo(tx, ty) {
+  if (!coords.inBounds(tx, ty) || !isWalkable(tx, ty)) return;
+  if (tx === character.tileX && ty === character.tileY) return;
+  const path = astar(character.tileX, character.tileY, tx, ty);
+  if (!path || path.length === 0) return;
+  character.path  = path;
+  character.state = 'walking';
+  character.facing = facingFromDelta(path[0].x - character.tileX, path[0].y - character.tileY);
+}
+
+function getWalkBob() {
+  if (character.state !== 'walking') return 0;
+  return Math.sin(performance.now() * 0.015) * 3;
+}
+
+function updateCharacter(dt) {
+  if (!character.visible || character.state !== 'walking' || character.path.length === 0) return;
+  const next   = character.path[0];
+  const target = tileCenter(next.x, next.y);
+  const dx = target.x - character.pixelX;
+  const dy = target.y - character.pixelY;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 2) {
+    character.pixelX = target.x;
+    character.pixelY = target.y;
+    character.tileX  = next.x;
+    character.tileY  = next.y;
+    character.path.shift();
+    if (character.path.length === 0) {
+      character.state = 'idle';
+    } else {
+      const n = character.path[0];
+      character.facing = facingFromDelta(n.x - character.tileX, n.y - character.tileY);
+    }
+  } else {
+    const step = CHAR_SPEED * dt;
+    character.pixelX += (dx / dist) * step;
+    character.pixelY += (dy / dist) * step;
+  }
+}
 
 function findSpawnTile() {
   const candidates = [[0,0],[0,1],[1,0],[1,1],[0,2],[2,0],[1,2],[2,1],[2,2]];
@@ -849,10 +1017,17 @@ function setMode(mode) {
     const sp = findSpawnTile();
     character.tileX   = sp.x;
     character.tileY   = sp.y;
+    const center      = tileCenter(sp.x, sp.y);
+    character.pixelX  = center.x;
+    character.pixelY  = center.y;
+    character.path    = [];
+    character.state   = 'idle';
     character.visible = true;
   } else {
     character.visible = false;
-    syncToolbar(); // restore undo/redo disabled state
+    character.path    = [];
+    character.state   = 'idle';
+    syncToolbar();
   }
 }
 
@@ -938,13 +1113,21 @@ canvas.addEventListener('mousemove', e => {
 });
 
 canvas.addEventListener('mousedown', e => {
-  if (drag.state !== 'idle') return;
-  const rect  = canvas.getBoundingClientRect();
+  const rect   = canvas.getBoundingClientRect();
   const scaleX = canvas.width  / rect.width;
   const scaleY = canvas.height / rect.height;
   const mx = (e.clientX - rect.left) * scaleX;
   const my = (e.clientY - rect.top)  * scaleY;
   const iso = coords.toIso(mx, my);
+
+  // ── LIVE mode: click-to-move ──────────────────
+  if (currentMode === MODE.LIVE) {
+    startMoveTo(iso.x, iso.y);
+    return;
+  }
+
+  // ── BUILD mode ────────────────────────────────
+  if (drag.state !== 'idle') return;
 
   // Hit-test furniture (reverse sorted = front first)
   const sorted = [...furnitures].sort((a,b) => b.sortKey() - a.sortKey());
@@ -1150,7 +1333,12 @@ function updateStatusBar() {
 // ─────────────────────────────────────────────
 // GAME LOOP
 // ─────────────────────────────────────────────
-function gameLoop() {
+let _lastTime = 0;
+
+function gameLoop(timestamp) {
+  const dt = Math.min((timestamp - _lastTime) / 1000, 0.1); // cap 100 ms
+  _lastTime = timestamp;
+
   renderer.clear();
 
   if (!spriteLoader.ready) {
@@ -1163,13 +1351,19 @@ function gameLoop() {
     return;
   }
 
+  if (character.visible) updateCharacter(dt);
+
   renderer.drawFloor(hoverTile);
   renderer.drawWalls();
+
+  // Path dots (behind all objects)
+  if (character.visible && character.path.length > 0) renderer.drawPath(character.path);
 
   // Depth-sorted render: furniture + character together
   const renderItems = furnitures.map(f => ({ isChar: false, f, key: f.sortKey() }));
   if (character.visible) {
-    renderItems.push({ isChar: true, key: character.tileX + character.tileY + 0.5 });
+    const charIso = isoFloatFromScreen(character.pixelX, character.pixelY);
+    renderItems.push({ isChar: true, key: charIso.x + charIso.y + 0.5 });
   }
   renderItems.sort((a, b) => a.key - b.key);
   for (const item of renderItems) {
