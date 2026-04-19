@@ -218,12 +218,12 @@ const OFFSET_Y    = 97;
 const WALL_HEIGHT = 96;
 
 const FURNITURE_DEFS = {
-  rug:      { w: 2, d: 2, h: 2,  color: '#4A90E2', label: 'Rug',      isRug: true, spriteName: 'rugSquare'     },
-  chair:    { w: 1, d: 1, h: 32, color: '#7ED321', label: 'Chair',                 spriteName: 'chair'          },
-  table:    { w: 2, d: 1, h: 26, color: '#D0021B', label: 'Table',                 spriteName: 'table'          },
-  bed:      { w: 2, d: 3, h: 20, color: '#9013FE', label: 'Bed',                   spriteName: 'bedDouble'      },
-  wardrobe: { w: 1, d: 2, h: 64, color: '#F5A623', label: 'Wardrobe',              spriteName: 'bookcaseClosed' },
-  plant:    { w: 1, d: 1, h: 48, color: '#50E3C2', label: 'Plant',                 spriteName: 'pottedPlant'    },
+  rug:      { w: 2, d: 2, h: 2,  color: '#4A90E2', label: 'Rug',      isRug: true, spriteName: 'rugSquare'                                                           },
+  chair:    { w: 1, d: 1, h: 32, color: '#7ED321', label: 'Chair',                 spriteName: 'chair'                                                               },
+  table:    { w: 2, d: 1, h: 26, color: '#D0021B', label: 'Table',                 spriteName: 'table',        dirMap: { 0: 'NW', 90: 'NE', 180: 'SE', 270: 'SW' }  },
+  bed:      { w: 3, d: 3, h: 20, color: '#9013FE', label: 'Bed',                   spriteName: 'bedDouble'                                                           },
+  wardrobe: { w: 1, d: 1, h: 64, color: '#F5A623', label: 'Wardrobe',              spriteName: 'bookcaseClosed'                                                      },
+  plant:    { w: 1, d: 1, h: 48, color: '#50E3C2', label: 'Plant',                 spriteName: 'pottedPlant',  spriteYOffset: -34                                   },
 };
 
 // ─────────────────────────────────────────────
@@ -640,8 +640,9 @@ class Renderer {
     }
   }
 
-  _rotToDir(rotation) {
-    return { 0: 'SE', 90: 'SW', 180: 'NW', 270: 'NE' }[rotation] || 'SE';
+  _rotToDir(rotation, dirMap) {
+    const map = dirMap || { 0: 'SE', 90: 'SW', 180: 'NW', 270: 'NE' };
+    return map[rotation] || map[0];
   }
 
   drawSprite(img, isoX, isoY, isoZ, effectiveW, effectiveD, options = {}) {
@@ -650,7 +651,7 @@ class Renderer {
     // Anchor: bottom-center of sprite → front vertex of tile footprint
     const anchor = coords.toScreen(isoX + effectiveW, isoY + effectiveD, isoZ);
     const drawX  = Math.round(anchor.x - img.width  / 2);
-    const drawY  = Math.round(anchor.y - img.height);
+    const drawY  = Math.round(anchor.y - img.height + (options.yOffset || 0));
 
     ctx.globalAlpha = options.preview ? 0.5 : 1.0;
     ctx.drawImage(img, drawX, drawY);
@@ -687,12 +688,13 @@ class Renderer {
   drawFurnitureList(furnitures, selectedId) {
     const sorted = [...furnitures].sort((a,b) => a.sortKey() - b.sortKey());
     for (const f of sorted) {
-      const spriteName = FURNITURE_DEFS[f.type].spriteName;
-      const dir = this._rotToDir(f.rotation);
-      const img = spriteName ? spriteLoader.get(spriteName, dir) : null;
+      const def = FURNITURE_DEFS[f.type];
+      const dir = this._rotToDir(f.rotation, def.dirMap);
+      const img = def.spriteName ? spriteLoader.get(def.spriteName, dir) : null;
       if (img) {
         this.drawSprite(img, f.x, f.y, f.z, f.effectiveW, f.effectiveD, {
           selected: f.id === selectedId,
+          yOffset:  def.spriteYOffset || 0,
         });
       } else {
         this.drawCube(f.x, f.y, f.z, f.effectiveW, f.effectiveD, f.h, f.color, {
@@ -706,10 +708,10 @@ class Renderer {
     const def = FURNITURE_DEFS[type];
     let w = def.w, d = def.d;
     if (rotation === 90 || rotation === 270) [w, d] = [d, w];
-    const dir = this._rotToDir(rotation);
+    const dir = this._rotToDir(rotation, def.dirMap);
     const img = def.spriteName ? spriteLoader.get(def.spriteName, dir) : null;
     if (img) {
-      this.drawSprite(img, tileX, tileY, baseZ, w, d, { preview: true, valid });
+      this.drawSprite(img, tileX, tileY, baseZ, w, d, { preview: true, valid, yOffset: def.spriteYOffset || 0 });
     } else {
       this.drawCube(tileX, tileY, baseZ, w, d, def.h, def.color, { preview: true, valid });
     }
