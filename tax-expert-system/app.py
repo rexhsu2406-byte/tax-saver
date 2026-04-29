@@ -1,6 +1,6 @@
 import streamlit as st
 from engine.decision_tree import (
-    TREE,
+    START_NODE,
     get_node,
     get_result_strategies,
     is_result_node,
@@ -116,7 +116,7 @@ if "history" not in st.session_state:
     # history: list of node_id strings（已回答過的節點）
     st.session_state.history = []
 if "current_node" not in st.session_state:
-    st.session_state.current_node = "start"
+    st.session_state.current_node = START_NODE
 if "show_details" not in st.session_state:
     # dict: strategy_id -> bool
     st.session_state.show_details = {}
@@ -138,7 +138,7 @@ def choose_option(next_node: str) -> None:
 
 def restart() -> None:
     st.session_state.history = []
-    st.session_state.current_node = "start"
+    st.session_state.current_node = START_NODE
     st.session_state.show_details = {}
 
 
@@ -167,27 +167,27 @@ if not is_result_node(current):
         st.error(f"找不到節點：{current}，請重新開始。")
         st.button("重新開始", on_click=restart)
     else:
-        hint_html = (
-            f'<div class="hint-text">{node["hint"]}</div>'
-            if node.get("hint")
+        subtitle_html = (
+            f'<div class="hint-text">{node["subtitle"]}</div>'
+            if node.get("subtitle")
             else ""
         )
         st.markdown(
             f"""
             <div class="question-box">
-                <div class="question-text">{node["question"]}</div>
-                {hint_html}
+                <div class="question-text">{node["text"]}</div>
+                {subtitle_html}
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        for opt in node["options"]:
+        for label, next_id in node["options"].items():
             st.button(
-                opt["label"],
-                key=f"opt_{current}_{opt['next']}",
+                label,
+                key=f"opt_{current}_{next_id}",
                 on_click=choose_option,
-                args=(opt["next"],),
+                args=(next_id,),
             )
 
         st.markdown("")
